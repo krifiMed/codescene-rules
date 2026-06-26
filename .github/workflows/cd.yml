@@ -1,0 +1,140 @@
+# =============================================================================
+# CD — Déploiement Continu
+# =============================================================================
+# Ce workflow se déclenche automatiquement après un CI réussi sur main.
+# Il déploie d'abord en pré-production (automatique), puis en production
+# UNIQUEMENT après approbation humaine via un environnement protégé GitHub.
+#
+# ⚠️ PRÉREQUIS : configurer l'environnement "production" dans GitHub :
+#    Settings > Environments > New environment > "production"
+#    → Cocher "Required reviewers" et ajouter les approbateurs autorisés.
+# =============================================================================
+
+name: CD – Deploy
+
+# ---------------------------------------------------------------------------
+# Déclencheur : s'exécute quand le workflow CI se termine avec succès sur main.
+# ---------------------------------------------------------------------------
+on:
+  workflow_run:
+    workflows: ["CI – Build, Test & Scan"]
+    types: [completed]
+    branches: [main]
+
+# ---------------------------------------------------------------------------
+# Job 1 : Déploiement pré-production (automatique)
+# ---------------------------------------------------------------------------
+jobs:
+  deploy-staging:
+    name: 🚀 Deploy pré-production
+    runs-on: ubuntu-latest
+
+    # Ne s'exécute que si le CI a réussi (pas en cas d'échec ou d'annulation).
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    environment:
+      name: staging
+      url: https://staging.example.com  # ← Remplacer par l'URL réelle
+
+    steps:
+      # 1. Récupérer le code source.
+      - name: Checkout du code source
+        uses: actions/checkout@v4
+
+      # 2. Se connecter au registre Docker (GitHub Container Registry).
+      - name: Connexion au registre Docker (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Construire et pousser les images Docker vers le registre.
+      #    On tague avec le SHA du commit pour traçabilité complète.
+      - name: Build & Push des images Docker
+        run: |
+          SERVICES=("catalog:src/ECommerce.Catalog.Api/Dockerfile" \
+                    "gateway:src/ECommerce.Gateway/Dockerfile" \
+                    "ordering:src/ECommerce.Ordering.Api/Dockerfile" \
+                    "web:src/ECommerce.Web/Dockerfile")
+
+          for entry in "${SERVICES[@]}"; do
+            SVC="${entry%%:*}"
+            DFILE="${entry#*:}"
+            IMAGE="ghcr.io/${{ github.repository }}/ecommerce-${SVC}"
+
+            docker build -t "${IMAGE}:${{ github.sha }}" \
+                         -t "${IMAGE}:staging" \
+                         -f "${DFILE}" .
+
+            docker push "${IMAGE}:${{ github.sha }}"
+            docker push "${IMAGE}:staging"
+          done
+
+      # 4. Déployer en pré-production.
+      #    ⬇️ Adaptez cette étape à votre outil de déploiement (kubectl, Helm, etc.)
+      - name: Déployer en pré-production
+        run: |
+          echo "============================================="
+          echo "  Déploiement pré-production en cours..."
+          echo "  Images taguées : ${{ github.sha }}"
+          echo "============================================="
+          # TODO: Ajoutez ici vos commandes de déploiement, par exemple :
+          #   kubectl set image deployment/catalog catalog=ghcr.io/.../ecommerce-catalog:${{ github.sha }}
+          #   helm upgrade --install ecommerce ./helm/ecommerce --set image.tag=${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Job 2 : Déploiement production (avec approbation humaine obligatoire)
+  # ---------------------------------------------------------------------------
+  deploy-production:
+    name: 🏭 Deploy production
+    runs-on: ubuntu-latest
+    needs: deploy-staging  # Ne démarre qu'après le succès du déploiement staging.
+
+    # ⚠️ ENVIRONNEMENT PROTÉGÉ : GitHub bloquera ici et demandera une
+    #    approbation manuelle avant de continuer. C'est le "gate" de sécurité.
+    #
+    #    Configuration requise :
+    #      Settings > Environments > "production" > Required reviewers
+    environment:
+      name: production
+      url: https://www.example.com  # ← Remplacer par l'URL réelle
+
+    steps:
+      # 1. Récupérer le code source.
+      - name: Checkout du code source
+        uses: actions/checkout@v4
+
+      # 2. Se connecter au registre Docker.
+      - name: Connexion au registre Docker (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Taguer les images staging comme "latest" pour la production.
+      #    On réutilise les images déjà scannées et testées en staging.
+      - name: Promouvoir les images en production
+        run: |
+          SERVICES=("catalog" "gateway" "ordering" "web")
+          IMAGE_BASE="ghcr.io/${{ github.repository }}/ecommerce"
+
+          for SVC in "${SERVICES[@]}"; do
+            docker pull "${IMAGE_BASE}-${SVC}:${{ github.sha }}"
+            docker tag  "${IMAGE_BASE}-${SVC}:${{ github.sha }}" \
+                        "${IMAGE_BASE}-${SVC}:latest"
+            docker push "${IMAGE_BASE}-${SVC}:latest"
+          done
+
+      # 4. Déployer en production.
+      #    ⬇️ Adaptez cette étape à votre outil de déploiement.
+      - name: Déployer en production
+        run: |
+          echo "============================================="
+          echo "  🏭 Déploiement PRODUCTION en cours..."
+          echo "  Images taguées : ${{ github.sha }} → latest"
+          echo "============================================="
+          # TODO: Ajoutez ici vos commandes de déploiement production :
+          #   kubectl set image deployment/catalog catalog=ghcr.io/.../ecommerce-catalog:latest
+          #   helm upgrade --install ecommerce ./helm/ecommerce -f values-prod.yaml
