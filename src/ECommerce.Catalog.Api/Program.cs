@@ -22,6 +22,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapCatalogEndpoints();
+app.MapCatalogHealthEndpoint();
 
 // Ensure the in-memory database is created and seeded on startup.
 using (var scope = app.Services.CreateScope())
