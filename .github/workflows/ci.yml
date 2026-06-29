@@ -99,7 +99,7 @@ jobs:
       #    ⚠️ Le pipeline ÉCHOUE si des failles CRITICAL ou HIGH sont trouvées.
       #    Cela empêche de déployer une image vulnérable.
       - name: Scan de sécurité Trivy – ${{ matrix.service.name }}
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           image-ref: ecommerce-${{ matrix.service.name }}:${{ github.sha }}
           format: table
