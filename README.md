@@ -1,241 +1,220 @@
-# ECommerce — application e-commerce .NET 10 (microservices + interface web Blazor)
+# CodeScene Code Health — Demo, Analysis & Refactoring
 
-Une application **e-commerce complète** : un **catalogue de produits**, un **panier**, le
-**passage de commandes** et leur **suivi**, le tout avec une **interface web** et une **API
-REST**. Elle est construite en **.NET 10 / ASP.NET Core** et orchestrée par **.NET Aspire**.
-
-Tout démarre avec **une seule commande** et **sans installer de base de données** (les données
-vivent en mémoire). Ce guide est pensé pour être suivi **même sans connaître .NET**.
+A hands-on demonstration of **CodeScene-style code health analysis and zero-tolerance refactoring** on a .NET 10 e-commerce microservices application, powered by **Claude Code skills**.
 
 ---
 
-## 1. Ce que fait l'application
+## What This Project Demonstrates
 
-### Côté interface web (Blazor)
-- **Catalogue** : afficher la liste des produits (nom, description, prix, stock).
-- **Panier** : ajouter des produits, ajuster les quantités.
-- **Commande** : saisir un nom de client et **passer la commande**.
-- **Suivi** : consulter l'historique des commandes.
+This project walks through a complete code health lifecycle:
 
-### Côté technique (sous le capot)
-- **Architecture microservices** : l'application est découpée en services indépendants.
-- **Passerelle unique (gateway)** : un seul point d'entrée route le trafic vers les services.
-- **Validation inter-services** : à la création d'une commande, chaque produit est **vérifié
-  en temps réel** auprès du service Catalogue (un service appelle l'autre).
-- **Tableau de bord d'observabilité** (dashboard Aspire) : voir en direct les **logs**, les
-  **traces** des appels entre services, et les **métriques**.
-- **Base de données en mémoire** : aucune installation, démarrage immédiat.
+1. **Generate intentionally unhealthy code** to showcase common code smells
+2. **Analyze it** with a structured violation report and scoring
+3. **Fix every violation** in a single pass with no exceptions
+4. **Re-analyze** to confirm the code is healthy
+
+All steps are automated using reusable Claude Code skills.
 
 ---
 
-## 2. Architecture en un coup d'œil
+## The Workflow
+
+### Step 1 — Create Unhealthy Demo Code (`/unhealthy-code-demo`)
+
+A single file `UnhealthyCatalogEndpoints.cs` was generated with **every major code smell** baked in:
+
+- **453 lines** in one static class
+- **6+ unrelated responsibilities**: CRUD, reporting, CSV export, email, discount calculation, logging
+- **3 copy-pasted discount blocks** (60+ duplicated lines)
+- **6-level nested validation** (pyramid of doom)
+- **~200-line search handler** with cyclomatic complexity ~28
+- **Static mutable state** (`_logBuffer`, `_requestCount`) shared across requests
+- **Raw primitives** (`int discountType`, `string status`) instead of domain types
+
+### Step 2 — Analyze Code Health (`/code-health-analyzer`)
+
+A full CodeScene-inspired analysis was run, producing `code-health-report.md`:
 
 ```
-        ┌───────────────────────────────┐
-        │   Web (interface Blazor)       │   ← ce que voit l'utilisateur
-        └───────────────┬───────────────┘
-                        │  HTTP
-                ┌───────▼────────┐
-                │ Gateway (YARP) │             ← point d'entrée unique
-                └───┬────────┬───┘
-          /catalog  │        │  /ordering
-           ┌────────▼──┐  ┌──▼───────────┐
-           │ Catalog   │◄─┤ Ordering     │     ← Ordering appelle Catalog
-           │ (produits)│  │ (commandes)  │       pour valider les produits
-           └───────────┘  └──────────────┘
-            base mémoire    base mémoire
+Overall Score: 1.0 / 10  (Critical)
+Critical violations: 12
+Advisory violations: 6
+Total smells found: 18
 ```
 
-| Projet | Rôle |
-|---|---|
-| **ECommerce.AppHost** | L'**orchestrateur** : c'est LE projet qu'on lance. Il démarre tous les services et le tableau de bord. |
-| **ECommerce.Web** | L'**interface web** (Blazor). Pages Catalogue, Panier, Commandes. |
-| **ECommerce.Gateway** | La **passerelle** (reverse proxy YARP). Route `/catalog/*` et `/ordering/*` vers les bons services. |
-| **ECommerce.Catalog.Api** | Le service **Catalogue** : gère les produits (API REST + base en mémoire). |
-| **ECommerce.Ordering.Api** | Le service **Commandes** : gère les commandes, et **appelle Catalog** pour valider chaque produit. |
-| **ECommerce.ServiceDefaults** | Configuration **commune** à tous les services : observabilité, contrôles de santé, résilience réseau, découverte de services. |
+**Top findings:**
 
-> Les services ne connaissent jamais l'adresse exacte des autres : elle est **résolue
-> automatiquement à l'exécution** par la *découverte de services* d'Aspire, à partir des noms
-> définis dans `AppHost.cs` (ex. `https+http://catalog`).
+| # | Smell | Severity | Location |
+|---|-------|----------|----------|
+| 1 | Brain Class / God Class | Critical | Entire class — 453 lines, 6+ responsibilities |
+| 2 | Brain Method | Critical | Search handler — ~200 lines, CC ~28 |
+| 3 | DRY Violation x3 | Critical | Discount logic copy-pasted 3 times |
+| 4 | Nested Complexity | Critical | Bulk-update — 6-level nesting |
+| 5 | Bumpy Road x2 | Critical | Search + Report — unextracted logical sections |
+| 6 | Complex Conditional | Advisory | Ambiguous `&&`/`||` with no parentheses |
+| 7 | Primitive Obsession | Advisory | `int`/`string` for discount domain concepts |
+
+### Step 3 — Fix All Violations (`/code-health-fixer`)
+
+Every violation was resolved in a single pass. The 453-line God Class was split into **7 focused files**:
+
+| File | Lines | Responsibility |
+|------|-------|---------------|
+| `Models/DiscountResult.cs` | 30 | `DiscountType` enum + `DiscountResult` record with `Calculate()` — eliminates all 3 DRY violations |
+| `Endpoints/RequestLog.cs` | 39 | Shared logging state + `LogDiscount()` helper |
+| `Endpoints/ProductSearchEndpoints.cs` | 160 | `/search` — 14 focused helpers for filtering, sorting, pagination, CSV export |
+| `Endpoints/ProductBulkUpdateEndpoints.cs` | 68 | `/bulk-update` — guard-clause validation (flattens 6-level nesting to max 2) |
+| `Endpoints/ProductReportEndpoints.cs` | 104 | `/report` — report generation with 6 section helpers |
+| `Endpoints/ProductLogEndpoints.cs` | 18 | `/logs` — GET/DELETE log management |
+| `Endpoints/UnhealthyCatalogEndpoints.cs` | 15 | Thin coordinator — creates route group and delegates |
+
+**Key refactoring techniques applied:**
+
+- **Guard clauses** — replaced 6-level nested `if`/`else` with early returns
+- **Named predicates** — `IsExcludedOutOfStock()`, `MatchesNameFilter()`, `MatchesPriceFilter()`
+- **Domain types** — `DiscountType` enum and `DiscountResult` record replace raw `int`/`string`
+- **Single shared method** — `DiscountResult.Calculate()` replaces 3 copy-pasted blocks
+- **Orchestrator pattern** — handler methods read like a table of contents, each helper does one thing
+- **Strategy via switch expression** — `SortResults()` replaces nested `if`/`else if` chains
+
+### Step 4 — Verify the Fix (`/code-health-analyzer` re-run)
+
+```
+Overall Score: 9.9 / 10  (Excellent)
+Critical violations: 0
+Advisory violations: 1 (ProductSearchEndpoints.cs at 160 lines — monitor threshold)
+```
 
 ---
 
-## 3. Prérequis et installation
+## Before vs. After
 
-Il faut **une seule chose** : le **SDK .NET 10**.
-👉 **Docker n'est PAS nécessaire** (l'application n'utilise aucun conteneur ; le tableau de
-bord tourne directement dans le programme).
+| Metric | Before | After |
+|--------|--------|-------|
+| **Code Health Score** | 1.0 / 10 | 9.9 / 10 |
+| **Critical violations** | 12 | 0 |
+| **Advisory violations** | 6 | 1 |
+| **Files** | 1 (453 lines) | 7 (434 lines total) |
+| **Longest function** | ~200 lines | 16 lines |
+| **Max nesting depth** | 6–7 levels | 2 levels |
+| **Max cyclomatic complexity** | ~28 | 7 |
+| **DRY violations** | 3 (60+ duplicated lines) | 0 |
+| **Responsibilities per class** | 6+ | 1 |
 
-### 3.1 Vérifier / installer le SDK .NET 10
+---
 
-Dans un terminal :
+## Claude Code Skills Used
+
+Four reusable skills power this workflow (located in `.claude/skills/`):
+
+| Skill | Purpose |
+|-------|---------|
+| `unhealthy-code-demo` | Generates intentionally unhealthy code with configurable smells for training |
+| `code-health-analyzer` | Performs full CodeScene-style analysis: smell detection, scoring, violation report |
+| `code-health-fixer` | Zero-tolerance refactoring: fixes every violation in one pass, no TODOs |
+| `codescene-code-health` | Combined workflow orchestrating analysis and fixing |
+
+### How to use them
 
 ```bash
-dotnet --version
+# Generate demo unhealthy code
+/unhealthy-code-demo
+
+# Analyze code health and produce a report
+/code-health-analyzer
+
+# Fix all violations automatically
+/code-health-fixer
 ```
-
-- Si le numéro commence par `10.` (ex. `10.0.301`) → c'est bon.
-- Sinon, installez le **SDK** (pas seulement le « Runtime ») :
-  - Téléchargement : <https://dotnet.microsoft.com/download/dotnet/10.0>
-  - macOS (Homebrew) : `brew install dotnet-sdk`
-
-> **Sur ce poste**, le SDK est dans `/usr/local/share/dotnet` mais n'est pas dans le PATH par
-> défaut. À refaire dans **chaque nouveau terminal** :
-> ```bash
-> export PATH="/usr/local/share/dotnet:$PATH"
-> dotnet --version   # doit afficher 10.x
-> ```
-
-### 3.2 Faire confiance au certificat HTTPS de développement (une seule fois)
-
-**Étape requise.** Sans elle, le tableau de bord Aspire ne peut pas ouvrir sa connexion
-sécurisée et le terminal se remplit d'erreurs `UntrustedRoot`.
-
-```bash
-dotnet dev-certs https --trust
-```
-
-(macOS peut demander le mot de passe du trousseau : approuvez.)
 
 ---
 
-## 4. Lancer l'application
+## Code Smells Reference
 
-Placez-vous **à la racine du projet** (le dossier qui contient `ECommerce.slnx`) :
+| Smell | Category | Detection Signal |
+|-------|----------|-----------------|
+| Brain Class / God Class | Module | Class > 150 lines with 5+ public methods spanning 2+ concerns |
+| Low Cohesion | Module | Methods in a class that don't share state or purpose |
+| Lines of Code | Module | File > 200 lines (warning), > 400 (severe) |
+| Brain Method | Function | Function > 60 lines (C#) with high branching and nested logic |
+| Complex Method | Function | Cyclomatic complexity > 10 |
+| Large Method | Function | Function > 30 lines (C#) |
+| DRY Violation | Function | Same 3+ line block appears 2+ times |
+| Primitive Obsession | Function | Domain concepts as raw `int`/`string`/`bool` |
+| Nested Complexity | Implementation | Nesting depth >= 3 levels |
+| Bumpy Road | Implementation | 4+ unextracted logical sections in one function |
+| Complex Conditional | Implementation | Boolean expression with 3+ `&&`/`||` operators |
+
+---
+
+## Project Structure
+
+```
+ecommerce-app/
+├── .claude/skills/
+│   ├── code-health-analyzer/     # Analysis skill
+│   ├── code-health-fixer/        # Refactoring skill
+│   ├── codescene-code-health/    # Combined workflow
+│   └── unhealthy-code-demo/      # Demo generator
+├── code-health-report.md         # Full analysis report (18 violations documented)
+└── src/ECommerce.Catalog.Api/
+    ├── Endpoints/
+    │   ├── CatalogEndpoints.cs              # Original clean endpoints (untouched)
+    │   ├── UnhealthyCatalogEndpoints.cs     # Refactored coordinator (was 453-line God Class)
+    │   ├── ProductSearchEndpoints.cs        # Extracted search logic
+    │   ├── ProductBulkUpdateEndpoints.cs    # Extracted bulk update logic
+    │   ├── ProductReportEndpoints.cs        # Extracted report logic
+    │   ├── ProductLogEndpoints.cs           # Extracted log management
+    │   └── RequestLog.cs                    # Shared logging state
+    └── Models/
+        ├── Product.cs                       # Product entity (untouched)
+        └── DiscountResult.cs                # Domain types: DiscountType enum + DiscountResult record
+```
+
+---
+
+## Running the Application
 
 ```bash
-# (sur ce poste, d'abord :  export PATH="/usr/local/share/dotnet:$PATH" )
+# Prerequisites: .NET 10 SDK
 
+# Build the solution
+dotnet build
+
+# Run all services (Aspire dashboard included)
 dotnet run --project src/ECommerce.AppHost
+
+# Run tests
+dotnet test
 ```
 
-La première fois, .NET télécharge les dépendances et compile (quelques dizaines de secondes).
-Ensuite, le terminal affiche plusieurs URL. **Ouvrez celle nommée `Login URL`** (elle contient
-un jeton `?t=...` qui vous connecte directement au tableau de bord) :
+### API Routes (via gateway)
 
-```
-Dashboard:  https://localhost:<port>
-Login URL:  https://localhost:<port>/login?t=<jeton>   <-- celle-ci
-OTLP/gRPC:  https://localhost:<autre-port>             <-- NE PAS ouvrir (telemetrie interne)
-```
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/catalog/api/products` | List all products |
+| GET | `/catalog/api/products/{id}` | Get product by ID |
+| POST | `/catalog/api/products` | Create product |
+| GET | `/ordering/api/orders` | List all orders |
+| POST | `/ordering/api/orders` | Create order (validates products via Catalog) |
 
-> ⚠️ Le **port change à chaque lancement** (ex. `17089`, `17042`…). Utilisez toujours l'URL
-> affichée dans **votre** terminal, jamais un port fixe. La ligne `OTLP/gRPC` n'est pas une
-> page web : ne l'ouvrez pas.
+### V2 Endpoints (refactored from unhealthy code)
 
-C'est le **tableau de bord Aspire**, qui liste tous les services (`catalog`, `ordering`,
-`gateway`, `web`) avec leur état et leurs URL.
-
-**Pour tout arrêter : `Ctrl+C`** dans le terminal qui exécute l'AppHost.
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/catalog/api/v2/products/search` | Search with filtering, sorting, pagination, CSV export |
+| POST | `/catalog/api/v2/products/bulk-update` | Bulk update products with validation |
+| GET | `/catalog/api/v2/products/report` | Generate product catalog report |
+| GET | `/catalog/api/v2/products/logs` | View request logs |
+| DELETE | `/catalog/api/v2/products/logs` | Clear request logs |
 
 ---
 
-## 5. Utiliser l'application
+## Key Takeaways
 
-Depuis le tableau de bord :
-
-1. Cliquez sur la ressource **`web`** → l'**interface e-commerce** s'ouvre.
-2. Allez sur **Catalog** : la liste des produits s'affiche. **Ajoutez** des produits au panier.
-3. Saisissez un **nom de client** puis **Place order** (passer commande).
-4. Ouvrez **Orders** : votre commande apparaît dans l'historique.
-5. (Bonus) Onglets **Traces** / **Metrics** du tableau de bord : observez en direct l'appel
-   `Ordering → Catalog` qui valide les produits au moment de la commande.
-
----
-
-## 6. L'API REST (via la passerelle)
-
-L'interface web n'est qu'un client parmi d'autres : tout passe par la **passerelle**. Vous
-pouvez appeler l'API directement (l'adresse exacte de la ressource `gateway` est indiquée dans
-le tableau de bord).
-
-| Méthode | Route | Description |
-|---|---|---|
-| `GET` | `/catalog/api/products` | Liste des produits |
-| `GET` | `/catalog/api/products/{id}` | Un produit (404 si absent) |
-| `POST` | `/catalog/api/products` | Créer un produit |
-| `GET` | `/ordering/api/orders` | Liste des commandes |
-| `GET` | `/ordering/api/orders/{id}` | Une commande (404 si absente) |
-| `POST` | `/ordering/api/orders` | Créer une commande (valide les produits via Catalog) |
-
-Exemple — passer une commande :
-
-```bash
-curl -X POST http://<gateway>/ordering/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{ "customer": "Ada Lovelace", "items": [ { "productId": 1, "quantity": 2 } ] }'
-```
-
-> En mode développement, chaque service expose aussi sa description OpenAPI sur
-> `/openapi/v1.json`.
-
----
-
-## 7. Structure du projet & rôle des fichiers
-
-```
-.
-├── ECommerce.slnx                  ← la "solution" : liste les 6 projets
-└── src/
-    ├── ECommerce.AppHost/          ← l'orchestrateur (LE projet à lancer)
-    │   └── AppHost.cs              ← déclare les services et leur ordre de démarrage
-    ├── ECommerce.Web/              ← l'interface web Blazor
-    │   ├── Components/Pages/       ← les pages (Home, Products, Orders)
-    │   ├── Services/               ← clients HTTP vers la passerelle
-    │   └── Program.cs              ← configuration de l'interface
-    ├── ECommerce.Gateway/          ← la passerelle (reverse proxy YARP)
-    │   ├── appsettings.json        ← les règles de routage /catalog et /ordering
-    │   └── Program.cs
-    ├── ECommerce.Catalog.Api/      ← service Catalogue (produits)
-    │   ├── Models/Product.cs       ← la "forme" d'un produit
-    │   ├── Data/                   ← la base + les produits de démo
-    │   ├── Endpoints/              ← les routes /api/products
-    │   └── Program.cs
-    ├── ECommerce.Ordering.Api/     ← service Commandes
-    │   ├── Models/Order.cs         ← la "forme" d'une commande
-    │   ├── Services/               ← le client qui appelle Catalog pour valider
-    │   ├── Endpoints/              ← les routes /api/orders
-    │   └── Program.cs
-    └── ECommerce.ServiceDefaults/  ← configuration commune à tous les services
-        └── Extensions.cs           ← observabilité, santé, résilience, découverte
-```
-
-> Chaque projet contient un petit `README.md` qui détaille ses fichiers.
-> Après le premier lancement, des dossiers `bin/` et `obj/` apparaissent : ce sont des
-> **fichiers générés** par la compilation (on ne les modifie ni ne les versionne).
-
-### Quelques mots de vocabulaire
-
-| Terme | En clair |
-|---|---|
-| **.NET / SDK** | La plateforme de Microsoft et sa boîte à outils (commande `dotnet`). |
-| **ASP.NET Core** | La partie de .NET pour faire des sites et des API web. |
-| **Blazor** | La technologie pour construire l'interface web (les pages) en C#. |
-| **API REST** | Un service qui répond à des requêtes HTTP (`GET`, `POST`…). |
-| **EF Core** | L'outil qui relie le code C# à la base de données. |
-| **Gateway / reverse proxy** | Un service qui reçoit toutes les requêtes et les redirige vers le bon service interne. |
-| **.NET Aspire** | L'outil qui démarre tous les services ensemble et fournit le tableau de bord. |
-| **Découverte de services** | Le mécanisme qui retrouve l'adresse d'un service par son **nom** plutôt que par une adresse codée en dur. |
-
----
-
-## 8. Bon à savoir
-
-- **Les données ne sont pas persistées.** Les bases vivent en mémoire : les produits/commandes
-  créés disparaissent au prochain redémarrage, et les produits de démonstration reviennent.
-  Pour persister, on remplacerait la base en mémoire par PostgreSQL ou SQLite.
-- **Communication entre services en HTTP synchrone**, jamais via des adresses codées en dur :
-  elles sont résolues par la découverte de services à partir des noms de `AppHost.cs`.
-
----
-
-## 9. En cas de problème
-
-| Symptôme | Solution |
-|---|---|
-| Le tableau de bord affiche `UntrustedRoot` / erreur SSL | Le certificat HTTPS n'est pas approuvé. Arrêtez (`Ctrl+C`), lancez `dotnet dev-certs https --trust`, relancez (étape 3.2). |
-| `command not found: dotnet` | Le SDK n'est pas dans le PATH → étape 3.1 (`export PATH=...`). |
-| Un port est déjà utilisé | Une exécution précédente tourne encore. Fermez-la avec `Ctrl+C`, puis relancez. |
-| La page d'un service direct (sans passer par la passerelle) affiche une erreur sur `/` | Normal : les services n'ont pas de page d'accueil. Utilisez l'interface `web` ou les routes `/api/...`. |
-| La commande (`POST /ordering/api/orders`) renvoie une erreur 400 | Le produit demandé n'existe pas, ou la commande est vide. Vérifiez les `productId` envoyés. |
+1. **Code health is measurable** — systematic smell detection gives a clear score and prioritized fix list
+2. **One God Class can tank an entire codebase** — 453 lines with 12 critical violations pulled the score to 1.0/10
+3. **Guard clauses eliminate nesting** — 6-level pyramid of doom flattened to max 2 levels with early returns
+4. **DRY matters** — extracting `DiscountResult.Calculate()` eliminated 60+ duplicated lines across 3 sites
+5. **Small focused functions are readable** — the refactored code has no function over 20 lines, each named after what it does
+6. **Domain types prevent primitive obsession** — `DiscountType` enum and `DiscountResult` record make the code self-documenting

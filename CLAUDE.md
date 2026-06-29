@@ -18,8 +18,14 @@ dotnet build
 # Build a single project
 dotnet build src/ECommerce.Catalog.Api
 
-# Run tests (when test projects exist)
+# Run all tests
 dotnet test
+
+# Run a single test project
+dotnet test tests/ECommerce.Catalog.Tests
+
+# Run a single test by name
+dotnet test --filter "GetProducts_ReturnsSeededProducts"
 ```
 
 The Aspire dashboard port changes every launch. Use the "Login URL" printed to stdout to access it.
@@ -64,3 +70,10 @@ Both APIs use EF Core in-memory databases. Data resets on restart. The Catalog D
 - **Primary constructors**: DbContexts and service clients use C# primary constructor syntax.
 - **Typed HTTP clients**: inter-service communication uses `AddHttpClient<T>` with Aspire service discovery base addresses.
 - **Solution format**: uses `.slnx` (XML solution file), not `.sln`.
+
+## Tests
+
+Tests live in `tests/` and use **xUnit** with `WebApplicationFactory<Program>` (in-process integration tests, no real network).
+
+- **Catalog tests** use `WebApplicationFactory<Program>` directly — no mocking needed since Catalog has no upstream dependencies.
+- **Ordering tests** use a custom `OrderingApiFactory` that replaces `CatalogServiceClient`'s `HttpClient` with a `MockCatalogHandler` returning 4 known products (IDs 1–4). When adding Ordering tests that create orders, use those product IDs.

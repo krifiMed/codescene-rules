@@ -1,0 +1,125 @@
+# =============================================================================
+# CI — Intégration Continue
+# =============================================================================
+# Ce workflow s'exécute à chaque push ou pull request sur la branche main.
+# Il vérifie que le code compile, que les tests passent, et que les images
+# Docker ne contiennent pas de failles critiques (scan Trivy).
+# =============================================================================
+
+name: CI – Build, Test & Scan
+
+# ---------------------------------------------------------------------------
+# Déclencheurs : le pipeline se lance automatiquement sur push ou PR vers main.
+# ---------------------------------------------------------------------------
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Empêche les exécutions simultanées sur la même branche/PR (économie de runners).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Job 1 : Build & Test .NET
+# ---------------------------------------------------------------------------
+jobs:
+  build-and-test:
+    name: 🔨 Build & Test .NET
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Récupérer le code source du dépôt.
+      - name: Checkout du code source
+        uses: actions/checkout@v4
+
+      # 2. Installer le SDK .NET 10 (nécessaire pour compiler et tester).
+      - name: Installer le SDK .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # 3. Restaurer les dépendances NuGet (équivalent de npm install).
+      - name: Restaurer les dépendances NuGet
+        run: dotnet restore ECommerce.slnx
+
+      # 4. Compiler la solution en mode Release (optimisé, comme en production).
+      - name: Build en mode Release
+        run: dotnet build ECommerce.slnx --configuration Release --no-restore
+
+      # 5. Lancer les tests unitaires / d'intégration s'il y en a.
+      #    --no-build évite de recompiler une deuxième fois.
+      - name: Exécuter les tests
+        run: dotnet test ECommerce.slnx --configuration Release --no-build --verbosity normal
+
+  # ---------------------------------------------------------------------------
+  # Job 2 : Build des images Docker + Scan de sécurité Trivy
+  # ---------------------------------------------------------------------------
+  # Ce job tourne en PARALLÈLE du build .NET : les Dockerfiles compilent
+  # depuis le code source dans leur propre SDK, pas besoin d'attendre le job 1.
+  docker-scan:
+    name: 🐳 Docker Build & Trivy Scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      # Matrice : on construit et scanne les 4 services en parallèle.
+      matrix:
+        service:
+          - name: catalog
+            dockerfile: src/ECommerce.Catalog.Api/Dockerfile
+          - name: gateway
+            dockerfile: src/ECommerce.Gateway/Dockerfile
+          - name: ordering
+            dockerfile: src/ECommerce.Ordering.Api/Dockerfile
+          - name: web
+            dockerfile: src/ECommerce.Web/Dockerfile
+
+    steps:
+      # 1. Récupérer le code source.
+      - name: Checkout du code source
+        uses: actions/checkout@v4
+
+      # 2. Construire l'image Docker pour le service.
+      #    Le contexte de build est la racine du projet (.) car les Dockerfiles
+      #    utilisent des chemins relatifs depuis la racine (COPY src/...).
+      - name: Build de l'image Docker – ${{ matrix.service.name }}
+        run: |
+          docker build \
+            -t ecommerce-${{ matrix.service.name }}:${{ github.sha }} \
+            -f ${{ matrix.service.dockerfile }} \
+            .
+
+      # 3. Scanner l'image avec Trivy pour détecter les vulnérabilités.
+      #    ⚠️ Le pipeline ÉCHOUE si des failles CRITICAL ou HIGH sont trouvées.
+      #    Cela empêche de déployer une image vulnérable.
+      - name: Scan de sécurité Trivy – ${{ matrix.service.name }}
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          image-ref: ecommerce-${{ matrix.service.name }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # 4. Pousser l'image scannée vers GHCR (uniquement sur push vers main,
+      #    pas sur les PRs). Le CD récupérera ces images au lieu de reconstruire.
+      - name: Connexion au registre Docker (GHCR)
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push de l'image vers GHCR
+        if: github.event_name == 'push'
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/ecommerce-${{ matrix.service.name }}"
+          docker tag "ecommerce-${{ matrix.service.name }}:${{ github.sha }}" "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:${{ github.sha }}"
