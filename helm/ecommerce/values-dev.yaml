@@ -1,0 +1,8 @@
+# Surcharge DEV : minimal, jetable. Un seul réplica par service, pas d'autoscaling.
+# Usage : helm upgrade --install ecommerce helm/ecommerce -n ecommerce --create-namespace -f helm/ecommerce/values-dev.yaml
+
+autoscaling:
+  enabled: false
+
+ingress:
+  host: ecommerce.localhost
