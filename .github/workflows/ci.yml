@@ -57,10 +57,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 2 : Build des images Docker + Scan de sécurité Trivy
   # ---------------------------------------------------------------------------
+  # Ce job tourne en PARALLÈLE du build .NET : les Dockerfiles compilent
+  # depuis le code source dans leur propre SDK, pas besoin d'attendre le job 1.
   docker-scan:
     name: 🐳 Docker Build & Trivy Scan
     runs-on: ubuntu-latest
-    needs: build-and-test  # Ne démarre que si le build .NET a réussi.
+
+    permissions:
+      contents: read
+      packages: write
 
     strategy:
       # Matrice : on construit et scanne les 4 services en parallèle.
@@ -94,10 +99,27 @@ jobs:
       #    ⚠️ Le pipeline ÉCHOUE si des failles CRITICAL ou HIGH sont trouvées.
       #    Cela empêche de déployer une image vulnérable.
       - name: Scan de sécurité Trivy – ${{ matrix.service.name }}
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ecommerce-${{ matrix.service.name }}:${{ github.sha }}
           format: table
-          exit-code: "1"                # ← Fait échouer le job si failles trouvées
-          severity: CRITICAL,HIGH       # ← Ne bloque que sur CRITICAL et HIGH
-          ignore-unfixed: true          # ← Ignore les CVE sans correctif disponible
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # 4. Pousser l'image scannée vers GHCR (uniquement sur push vers main,
+      #    pas sur les PRs). Le CD récupérera ces images au lieu de reconstruire.
+      - name: Connexion au registre Docker (GHCR)
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push de l'image vers GHCR
+        if: github.event_name == 'push'
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/ecommerce-${{ matrix.service.name }}"
+          docker tag "ecommerce-${{ matrix.service.name }}:${{ github.sha }}" "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:${{ github.sha }}"

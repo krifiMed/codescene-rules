@@ -39,16 +39,6 @@ public static class CatalogEndpoints
 
         return group;
     }
-
-    public static IEndpointRouteBuilder MapCatalogHealthEndpoint(this IEndpointRouteBuilder routes)
-    {
-        routes.MapGet("/catalog/health", () => Results.Ok(new { status = "Healthy", service = "Catalog.Api" }))
-            .WithName("CatalogHealth")
-            .WithTags("Health")
-            .ExcludeFromDescription();
-
-        return routes;
-    }
 }
 
 public record CreateProductRequest(string Name, string? Description, decimal Price, int AvailableStock);

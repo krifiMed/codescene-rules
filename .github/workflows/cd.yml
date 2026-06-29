@@ -8,6 +8,9 @@
 # ⚠️ PRÉREQUIS : configurer l'environnement "production" dans GitHub :
 #    Settings > Environments > New environment > "production"
 #    → Cocher "Required reviewers" et ajouter les approbateurs autorisés.
+#
+# Les images Docker sont construites et scannées dans le CI, puis promues
+# ici (pas de rebuild) pour garantir que l'image déployée = l'image scannée.
 # =============================================================================
 
 name: CD – Deploy
@@ -37,9 +40,11 @@ jobs:
       url: https://staging.example.com  # ← Remplacer par l'URL réelle
 
     steps:
-      # 1. Récupérer le code source.
+      # 1. Récupérer le code source (le commit testé par le CI, pas le HEAD courant).
       - name: Checkout du code source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       # 2. Se connecter au registre Docker (GitHub Container Registry).
       - name: Connexion au registre Docker (GHCR)
@@ -49,26 +54,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. Construire et pousser les images Docker vers le registre.
-      #    On tague avec le SHA du commit pour traçabilité complète.
-      - name: Build & Push des images Docker
+      # 3. Promouvoir les images scannées par le CI (pas de rebuild).
+      #    On récupère les images poussées par le CI via leur tag SHA,
+      #    puis on les retague comme "staging".
+      - name: Promouvoir les images CI en staging
         run: |
-          SERVICES=("catalog:src/ECommerce.Catalog.Api/Dockerfile" \
-                    "gateway:src/ECommerce.Gateway/Dockerfile" \
-                    "ordering:src/ECommerce.Ordering.Api/Dockerfile" \
-                    "web:src/ECommerce.Web/Dockerfile")
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          SERVICES=("catalog" "gateway" "ordering" "web")
+          IMAGE_BASE="ghcr.io/${{ github.repository }}/ecommerce"
 
-          for entry in "${SERVICES[@]}"; do
-            SVC="${entry%%:*}"
-            DFILE="${entry#*:}"
-            IMAGE="ghcr.io/${{ github.repository }}/ecommerce-${SVC}"
-
-            docker build -t "${IMAGE}:${{ github.sha }}" \
-                         -t "${IMAGE}:staging" \
-                         -f "${DFILE}" .
-
-            docker push "${IMAGE}:${{ github.sha }}"
-            docker push "${IMAGE}:staging"
+          for SVC in "${SERVICES[@]}"; do
+            docker pull "${IMAGE_BASE}-${SVC}:${SHA}"
+            docker tag  "${IMAGE_BASE}-${SVC}:${SHA}" \
+                        "${IMAGE_BASE}-${SVC}:staging"
+            docker push "${IMAGE_BASE}-${SVC}:staging"
           done
 
       # 4. Déployer en pré-production.
@@ -77,11 +76,10 @@ jobs:
         run: |
           echo "============================================="
           echo "  Déploiement pré-production en cours..."
-          echo "  Images taguées : ${{ github.sha }}"
+          echo "  Images taguées : ${{ github.event.workflow_run.head_sha }}"
           echo "============================================="
           # TODO: Ajoutez ici vos commandes de déploiement, par exemple :
-          #   kubectl set image deployment/catalog catalog=ghcr.io/.../ecommerce-catalog:${{ github.sha }}
-          #   helm upgrade --install ecommerce ./helm/ecommerce --set image.tag=${{ github.sha }}
+          #   helm upgrade --install ecommerce ./helm/ecommerce --set image.tag=$SHA
 
   # ---------------------------------------------------------------------------
   # Job 2 : Déploiement production (avec approbation humaine obligatoire)
@@ -104,6 +102,8 @@ jobs:
       # 1. Récupérer le code source.
       - name: Checkout du code source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       # 2. Se connecter au registre Docker.
       - name: Connexion au registre Docker (GHCR)
@@ -117,12 +117,13 @@ jobs:
       #    On réutilise les images déjà scannées et testées en staging.
       - name: Promouvoir les images en production
         run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
           SERVICES=("catalog" "gateway" "ordering" "web")
           IMAGE_BASE="ghcr.io/${{ github.repository }}/ecommerce"
 
           for SVC in "${SERVICES[@]}"; do
-            docker pull "${IMAGE_BASE}-${SVC}:${{ github.sha }}"
-            docker tag  "${IMAGE_BASE}-${SVC}:${{ github.sha }}" \
+            docker pull "${IMAGE_BASE}-${SVC}:${SHA}"
+            docker tag  "${IMAGE_BASE}-${SVC}:${SHA}" \
                         "${IMAGE_BASE}-${SVC}:latest"
             docker push "${IMAGE_BASE}-${SVC}:latest"
           done
@@ -133,8 +134,7 @@ jobs:
         run: |
           echo "============================================="
           echo "  🏭 Déploiement PRODUCTION en cours..."
-          echo "  Images taguées : ${{ github.sha }} → latest"
+          echo "  Images promues : ${{ github.event.workflow_run.head_sha }} → latest"
           echo "============================================="
           # TODO: Ajoutez ici vos commandes de déploiement production :
-          #   kubectl set image deployment/catalog catalog=ghcr.io/.../ecommerce-catalog:latest
           #   helm upgrade --install ecommerce ./helm/ecommerce -f values-prod.yaml

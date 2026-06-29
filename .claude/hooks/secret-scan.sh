@@ -20,8 +20,17 @@ fi
 # Motifs de secrets fréquents (simplifié pour la démo ; en vrai : gitleaks/trufflehog)
 patterns='(password|passwd|secret|api[_-]?key|token|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|connectionstring|aws_secret_access_key)'
 
-# Scanne les fichiers indexés
-hits="$(git diff --cached -U0 2>/dev/null | grep -iE "^\+.*$patterns" || true)"
+# Scanne les fichiers indexés.
+# On retire les expressions ${{ ... }} (templates GitHub Actions) des lignes AVANT de
+# vérifier les motifs, pour ne pas masquer un vrai secret sur la même ligne.
+hits="$(git diff --cached -U0 2>/dev/null \
+  | grep -iE "^\+.*$patterns" \
+  | grep -vE '^\+\+\+' \
+  | grep -vE '^\+\s*#' \
+  | sed 's/\${{[^}]*}}//g' \
+  | grep -iE "$patterns" \
+  | grep -vE '^\+\s*\w+:\s*$' \
+  || true)"
 
 if [ -n "$hits" ]; then
   echo "⛔ COMMIT BLOQUÉ par le hook secret-scan : un secret potentiel a été détecté." >&2
